@@ -1,0 +1,125 @@
+#!/bin/bash
+set -e
+
+# === DEVICE CONFIGURATION ===
+DISK="/dev/sdb"
+EFI_PART="${DISK}3"
+ROOT_PART="${DISK}4"
+HOME_PART="${DISK}6"
+TIMEZONE="Asia/Kolkata"
+LOCALE="en_US.UTF-8"
+
+# === FUNCTIONS ===
+check_internet() {
+    echo "[*] Checking internet connection..."
+    if ping -q -c 2 -W 1 archlinux.org >/dev/null; then
+        echo "[+] Internet is available."
+        return 0
+    else
+        echo "[!] No internet detected."
+        return 1
+    fi
+}
+
+setup_wifi() {
+    echo "[*] Searching for wireless devices..."
+    if ! command -v iwctl &>/dev/null; then
+        echo "[!] 'iwctl' not found. Installing iwd..."
+        pacman -Sy --noconfirm iwd
+    fi
+
+    iwctl device list | grep -q "station"
+    if [[ $? -ne 0 ]]; then
+        echo "[!] No wireless device found. Skipping Wi-Fi setup."
+        return
+    fi
+
+    echo
+    echo "[*] Launching interactive Wi-Fi setup via 'iwctl'."
+    echo "    Type the following inside iwctl:"
+    echo "      station wlan0 scan"
+    echo "      station wlan0 get-networks"
+    echo "      station wlan0 connect <SSID>"
+    echo "    Type 'exit' to return here."
+    echo
+
+    iwctl
+
+    if check_internet; then
+        echo "[+] Wi-Fi connected successfully."
+    else
+        echo "[!] Wi-Fi setup failed. Please check manually and re-run script."
+        exit 1
+    fi
+}
+
+# === INITIAL NETWORK SETUP ===
+if ! check_internet; then
+    setup_wifi
+fi
+
+# === USER CONFIGURATION ===
+read -p "Enter hostname: " HOSTNAME
+read -p "Enter new username: " USERNAME
+
+echo -n "Enter password for user '$USERNAME': "
+read -s USER_PASS
+echo
+echo -n "Enter password for root: "
+read -s ROOT_PASS
+echo
+
+# === START INSTALL ===
+echo "=== [1] Formatting root partition ($ROOT_PART) ==="
+mkfs.ext4 -F "$ROOT_PART"
+
+echo "=== [2] Mounting root ==="
+mount "$ROOT_PART" /mnt
+
+echo "=== [3] Mounting home partition ($HOME_PART) ==="
+mkdir -p /mnt/home
+mount "$HOME_PART" /mnt/home
+
+echo "=== [4] Mounting EFI partition ($EFI_PART) ==="
+mkdir -p /mnt/boot/efi
+mount "$EFI_PART" /mnt/boot/efi
+
+echo "=== [5] Installing base system ==="
+pacstrap /mnt base linux linux-firmware \
+    grub efibootmgr os-prober intel-ucode \
+    dosfstools mtools sudo nano git networkmanager
+
+echo "=== [6] Generating fstab ==="
+genfstab -U /mnt >> /mnt/etc/fstab
+
+echo "=== [7] Entering chroot to configure system ==="
+arch-chroot /mnt /bin/bash <<EOF
+# Set hostname
+echo "$HOSTNAME" > /etc/hostname
+
+# Timezone
+ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
+hwclock --systohc
+
+# Locale
+sed -i "s/#$LOCALE/$LOCALE/" /etc/locale.gen
+locale-gen
+echo "LANG=$LOCALE" > /etc/locale.conf
+
+# Users
+useradd -m -G wheel -s /bin/bash "$USERNAME"
+echo "$USERNAME:$USER_PASS" | chpasswd
+echo "root:$ROOT_PASS" | chpasswd
+
+# Enable sudo
+sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
+
+# Bootloader
+grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
+grub-mkconfig -o /boot/grub/grub.cfg
+
+# Enable services
+systemctl enable NetworkManager
+EOF
+
+echo "✅ Arch installation complete. You may now reboot."
