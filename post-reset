@@ -1,0 +1,52 @@
+#!/bin/bash
+
+echo "=== Post-Reset Minimal Arch Configuration ==="
+
+# 1. Set hostname
+read -p "Enter hostname: " HOSTNAME
+echo "$HOSTNAME" | sudo tee /etc/hostname
+echo "127.0.0.1 localhost" | sudo tee /etc/hosts
+echo "::1       localhost" | sudo tee -a /etc/hosts
+echo "127.0.1.1 $HOSTNAME.localdomain $HOSTNAME" | sudo tee -a /etc/hosts
+
+# 2. Locale setup
+echo "[1/6] Configuring locale..."
+sudo sed -i 's/^#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+sudo locale-gen
+echo "LANG=en_US.UTF-8" | sudo tee /etc/locale.conf
+
+# 3. Timezone and keyboard
+echo "[2/6] Setting timezone to UTC and keymap to US..."
+sudo ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+sudo hwclock --systohc
+echo "KEYMAP=us" | sudo tee /etc/vconsole.conf
+sudo timedatectl set-ntp true
+
+# 4. Networking
+echo "[3/6] Installing and enabling NetworkManager..."
+sudo pacman -S --noconfirm networkmanager
+sudo systemctl enable NetworkManager.service
+
+# 5. Basic CLI tools
+echo "[4/6] Installing basic CLI utilities..."
+sudo pacman -S --noconfirm sudo git vim curl wget man-db man-pages bash-completion
+
+# 6. Sudo permissions
+echo "[5/6] Granting sudo access to wheel group..."
+sudo sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
+
+# Re-add user to wheel group
+read -p "Enter your username to re-add to wheel group (or leave blank to skip): " USERNAME
+if [[ -n "$USERNAME" ]]; then
+    sudo usermod -aG wheel "$USERNAME"
+    echo "User '$USERNAME' added to wheel group."
+fi
+
+# 7. Refresh and reinitialize Arch keyring
+echo "[6/6] Refreshing archlinux-keyring..."
+sudo pacman -Sy --noconfirm archlinux-keyring
+sudo rm -rf /etc/pacman.d/gnupg
+sudo pacman-key --init
+sudo pacman-key --populate archlinux
+
+echo "✅ Post-reset configuration complete. System is clean, keyring refreshed, and ready for DE/WM install."
