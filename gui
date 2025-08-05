@@ -1,0 +1,63 @@
+#!/bin/bash
+
+echo "=== GUI Installer for Arch ==="
+
+echo "Choose your desktop environment / window manager:"
+echo "1) XFCE"
+echo "2) GNOME"
+echo "3) KDE Plasma"
+echo "4) Hyprland"
+echo "5) None (Stay CLI only)"
+read -p "Enter your choice [1-5]: " choice
+
+case "$choice" in
+1)
+    echo "[+] Installing XFCE + LightDM..."
+    sudo pacman -S --noconfirm xfce4 xfce4-goodies lightdm lightdm-gtk-greeter
+    sudo systemctl enable lightdm
+    sudo systemctl set-default graphical.target
+    ;;
+2)
+    echo "[+] Installing GNOME + GDM..."
+    sudo pacman -S --noconfirm gnome gnome-tweaks gdm
+    sudo systemctl enable gdm
+    sudo systemctl set-default graphical.target
+    ;;
+3)
+    echo "[+] Installing KDE Plasma + SDDM..."
+    sudo pacman -S --noconfirm plasma kde-applications sddm
+    sudo systemctl enable sddm
+    sudo systemctl set-default graphical.target
+    ;;
+4)
+    echo "[+] Installing Hyprland (Wayland WM)..."
+    sudo pacman -S --noconfirm hyprland xdg-desktop-portal-hyprland xdg-desktop-portal wl-clipboard waybar wofi foot
+    echo "NOTE: No display manager will be installed — use TTY login or setup greetd manually."
+    sudo systemctl set-default graphical.target
+    ;;
+5)
+    echo "[+] No GUI will be installed. Staying CLI-only."
+    sudo systemctl set-default multi-user.target
+    exit 0
+    ;;
+*)
+    echo "Invalid choice. Aborting."
+    exit 1
+    ;;
+esac
+
+# Common GUI dependencies
+echo "[+] Installing common GUI packages (fonts, network tools, xdg utils)..."
+sudo pacman -S --noconfirm network-manager-applet gvfs xdg-utils xdg-user-dirs ttf-dejavu ttf-liberation noto-fonts
+
+# Optional: Enable NetworkManager if not already enabled
+sudo systemctl enable NetworkManager
+
+echo "✅ GUI installation complete. Reboot to start your new environment."
+
+read -p "Reboot now? (y/N): " reboot
+if [[ "$reboot" == "y" ]]; then
+    sudo reboot
+else
+    echo "Reboot manually when ready."
+fi
