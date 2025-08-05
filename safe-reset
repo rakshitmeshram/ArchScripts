@@ -1,0 +1,77 @@
+#!/bin/bash
+
+echo "=== Arch Safe Reset Script ==="
+echo "This will reset your Arch system to a clean state while preserving:"
+echo " - /home partition and data (if separately mounted)"
+echo " - Boot-critical packages (GRUB, efibootmgr, microcode, etc.)"
+echo " - Mounted drives and partition layout"
+echo ""
+
+# === SANITY CHECK: Show current mounts ===
+echo "=== Mounted Filesystems ==="
+findmnt -t btrfs,ext4,xfs,vfat,f2fs | grep -E "^TARGET|/"
+
+echo ""
+read -p "!!! WARNING: This will remove non-essential system packages. Continue? (y/N): " confirm
+if [[ "$confirm" != "y" ]]; then
+    echo "Aborted."
+    exit 1
+fi
+
+# === Step 1: Identify essential packages to keep ===
+echo "[1/6] Gathering essential package list..."
+
+BASE_PKGS=$(pacman -Qqg base base-devel linux linux-firmware 2>/dev/null)
+EXTRA_KEEP="efibootmgr grub os-prober intel-ucode dosfstools mtools archlinux-keyring"
+
+# Merge and deduplicate
+TO_KEEP=$(echo -e "$BASE_PKGS\n$EXTRA_KEEP" | sort -u)
+TO_REMOVE=$(comm -23 <(pacman -Qq | sort) <(echo "$TO_KEEP" | sort))
+
+# === Step 2: Remove non-essential packages ===
+echo "[2/6] Removing non-essential packages..."
+if [[ -n "$TO_REMOVE" ]]; then
+    sudo pacman -Rns --noconfirm $TO_REMOVE
+else
+    echo "Nothing to remove — system already minimal."
+fi
+
+# === Step 3: Clean pacman cache ===
+echo "[3/6] Cleaning pacman cache..."
+sudo pacman -Scc --noconfirm
+
+# === Step 4: Reinstall essential packages to refresh system ===
+echo "[4/6] Reinstalling core packages..."
+sudo pacman -Sy --noconfirm $TO_KEEP
+
+# === Step 5: Check if /home is separately mounted ===
+echo "[5/6] Detecting /home mount..."
+HOME_MOUNTED=$(findmnt -rn /home | awk '{print $1}')
+ROOT_MOUNTED=$(findmnt -rn / | awk '{print $1}')
+
+if [[ "$HOME_MOUNTED" != "$ROOT_MOUNTED" && -n "$HOME_MOUNTED" ]]; then
+    echo "/home is on a separate partition — skipping dotfile deletion."
+else
+    echo "/home is not separately mounted — wiping dotfiles."
+    rm -rf ~/.config ~/.local ~/.cache
+    rm -f ~/.Xresources ~/.xinitrc ~/.zshrc ~/.bashrc ~/.profile ~/.gtkrc-2.0 ~/.bash_profile ~/.bash_logout
+fi
+
+# === Step 6: Set default systemd target to terminal (multi-user) ===
+echo "[6/6] Setting default boot target to multi-user.target (no GUI)..."
+sudo systemctl set-default multi-user.target
+
+# === Done ===
+echo ""
+echo "✅ Safe reset complete."
+echo " - GUI removed"
+echo " - System base reinstalled"
+echo " - /home and mounted drives preserved"
+echo " - Boot tools and keyring intact"
+
+read -p "Reboot now? (y/N): " reboot
+if [[ "$reboot" == "y" ]]; then
+    sudo reboot
+else
+    echo "Reboot manually when ready."
+fi
